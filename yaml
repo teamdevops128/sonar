@@ -1,0 +1,50 @@
+trigger: none  # manual or scheduled trigger
+
+variables:
+  SONAR_TOKEN: $(sonar_token)
+  SONAR_ORG: 'your-org-key'
+  CSV_PATH: 'projects.csv'
+
+stages:
+- stage: DeleteSonarProjects
+  displayName: Delete SonarCloud Projects
+  jobs:
+  - job: DeleteProjects
+    displayName: Delete Projects from CSV
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - checkout: self
+
+    - task: Bash@3
+      displayName: Read CSV and delete projects
+      inputs:
+        targetType: 'inline'
+        script: |
+          set -euo pipefail
+
+          if [[ ! -f "$CSV_PATH" ]]; then
+            echo "Error: CSV file '$CSV_PATH' not found"
+            exit 1
+          fi
+
+          echo "Parsing CSV file..."
+          tail -n +2 "$CSV_PATH" | while IFS=',' read -r project_key project_name; do
+            project_key="$(echo "$project_key" | xargs)"
+            project_name="$(echo "$project_name" | xargs)"
+            if [[ -z "$project_key" ]]; then
+              echo "Skipping empty project_key row"
+              continue
+            fi
+
+            echo " Deleting project: key='$project_key', name='$project_name'"
+
+            response=$(curl -s -o /dev/null -w "%{http_code}" -u "$SONAR_TOKEN:" \
+              -X POST "https://sonarcloud.io/api/projects/delete?organization=$SONAR_ORG&project=$project_key")
+
+            if [[ "$response" =~ ^2 ]]; then
+              echo "✔ Successfully deleted project '$project_key'"
+            else
+              echo " Failed to delete project '$project_key' (HTTP $response)"
+            fi
+          done
