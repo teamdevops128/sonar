@@ -1,0 +1,65 @@
+trigger:
+- main
+
+pool:
+  name: aks-agent-pool
+  demands: Agent.OS -equals Linux
+
+steps:
+- script: |
+    #!/bin/bash
+    set -euo pipefail
+
+    SONARCLOUD_API="https://sonarcloud.io/api"
+    ORG_KEY="so"
+    OUTPUT_FILE="sonar_loc_report.csv"
+
+  
+    for cmd in curl jq; do
+      if ! command -v "$cmd" &>/dev/null; then
+        echo " Missing required tool: $cmd"
+        exit 1
+      fi
+    done
+
+    get_project_keys() {
+      local page=1 page_size=100
+      local keys=()
+
+      while :; do
+        resp=$(curl -s -u "${SONAR_TOKEN}:" \
+          "${SONARCLOUD_API}/components/search?organization=${ORG_KEY}&qualifiers=TRK&p=${page}&ps=${page_size}")
+        this_keys=($(echo "$resp" | jq -r '.components[].key'))
+        [[ ${#this_keys[@]} -eq 0 ]] && break
+        keys+=("${this_keys[@]}")
+        ((page++))
+      done
+
+      printf "%s\n" "${keys[@]}"
+    }
+
+    get_project_loc() {
+      local key="$1"
+      echo "$(curl -s -u "${SONAR_TOKEN}:" \
+        "${SONARCLOUD_API}/measures/component?component=${key}&metricKeys=ncloc" \
+        | jq -r '.component.measures[] | select(.metric=="ncloc") | .value // "0"')"
+    }
+
+    echo "ProjectKey,LinesOfCode" > "$OUTPUT_FILE"
+
+    while read -r project_key; do
+      echo "Fetching LOC for: $project_key"
+      loc=$(get_project_loc "$project_key")
+      echo "$project_key,$loc" | tee -a "$OUTPUT_FILE"
+    done < <(get_project_keys)
+
+    echo " CSV report generated: $OUTPUT_FILE"
+  env:
+    SONAR_TOKEN: $(sonar_token)
+
+- task: PublishPipelineArtifact@1
+  inputs:
+    targetPath: '$(System.DefaultWorkingDirectory)/sonar_loc_report.csv'
+    artifact: 'sonar_report'
+    publishLocation: pipeline
+  displayName: 'Publish LOC Report'
