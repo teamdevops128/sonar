@@ -1,0 +1,66 @@
+trigger:
+- none  # Run manually or via schedule
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  SONARCLOUD_API: "https://sonarcloud.io/api"
+  ORG_KEY: "your-org-key"
+  CSV_PATH: "projects.csv"
+
+steps:
+- bash: |
+    set -euo pipefail
+
+    for cmd in curl jq; do
+      if ! command -v $cmd &>/dev/null; then
+        echo "Required tool '$cmd' not found"
+        exit 1
+      fi
+    done
+
+    # Check CSV
+    if [[ ! -f "$CSV_PATH" ]]; then
+      echo "CSV file '$CSV_PATH' missing"
+      exit 1
+    fi
+
+    echo "ProjectKey,HTTPStatus" > delete_results.csv
+
+    tail -n +2 "$CSV_PATH" | while IFS=, read -r project_key; do
+      project_key="${project_key//[$'\r\n']}"  # trim CRLF/newlines
+      project_key="${project_key##*( )}"       # trim leading spaces
+      project_key="${project_key%%*( )}"       # trim trailing spaces
+
+      if [[ -z "$project_key" ]]; then
+        continue
+      fi
+
+      echo "Deleting SonarCloud project: '$project_key'..."
+      status=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "Authorization: Bearer ${SONAR_TOKEN}" \
+        -X POST "${SONARCLOUD_API}/projects/delete" \
+        --data "organization=${ORG_KEY}" \
+        --data "project=${project_key}")
+
+      if [[ "$status" =~ ^2 ]]; then
+        echo "✔ Deleted '$project_key'"
+      else
+        echo "Failed '$project_key' (HTTP $status)"
+      fi
+
+      echo "$project_key,$status" >> delete_results.csv
+    done
+
+    echo "Completed. See delete_results.csv"
+  displayName: "Delete SonarCloud Projects"
+  env:
+    SONAR_TOKEN: $(sonar_token)  # secret token with admin rights
+
+- task: PublishPipelineArtifact@1
+  inputs:
+    targetPath: 'delete_results.csv'
+    artifact: 'sonar-delete-results'
+    publishLocation: 'pipeline'
+  displayName: "Publish Deletion Report"
