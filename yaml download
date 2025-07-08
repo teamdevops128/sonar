@@ -1,0 +1,41 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  FEED_NAME: 'your_feed_name'
+  ORG: 'your_org_name'
+  PROJECT: 'your_project_name'
+  PACKAGE_NAME: 'your-package-name'
+  INDEX_URL: 'https://pkgs.dev.azure.com/$(ORG)/$(PROJECT)/_packaging/$(FEED_NAME)/pypi/simple/'
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '3.10'
+    addToPath: true
+
+- script: |
+    python -m pip install --upgrade pip
+    pip install $(PACKAGE_NAME) --extra-index-url $(INDEX_URL)
+  displayName: 'Install Python Package from Azure Artifacts'
+
+
+- script: |
+    python -c "import $(PACKAGE_NAME); print('Package imported successfully')"
+  displayName: 'Verify Package Import'
+
+
+
+
+
+  Enable OAuth in Pipeline Settings:
+
+Go to Pipelines → Edit → Options → Check:
+"Allow scripts to access the OAuth token"
+
+This allows Azure Pipelines to authenticate automatically to Azure Artifacts.
